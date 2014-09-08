@@ -1,0 +1,47 @@
+Note: I don't own the content. It has been scraped from Magoosh Flashcards (https://gre.magoosh.com/flashcards/vocabulary/decks).
+
+Contains the following things:
+ > Words.txt - A list of 1000 words from Magoosh.
+ > main.py - The python script. Refer to usage examples below.
+ > process.dict - JSON file mapping the words to the HTML explanation.
+ > out.html (generated) - The HTML output.
+
+
+This tiny utility does/has the following things:
+ - Has a list of 1000 words from Magoosh (Words.txt).
+ - Has a way to retrieve the description/explanation by making 1000 requests to Magoosh. This is long running (single threaded) process Good part: It can resume from where it left off. :)
+ - Generates an ugly HTML such that one can see all the words in one (big) screen.
+ - Provides the ability to append the words with a "*" in the file: "Words.txt" manually, so that the generated HTML highlights that word for review purposes.
+ - Even better, runs a full HTTP server that takes care of editing the Words.txt file, and reloading the WebView w/ appropriate changes to the highlight. There is a link called "MARK" within word descriptions for this.
+
+Usage Examples:
+
+*** Offline, Non-server mode ***
+
+Step 1:
+Update the Words.txt file manually. Append each word that you dont know with a "*". Eg line below:
+
+word1 word2 word3 word4* word5
+
+.. where word4 is a word you'd want to highlight.
+
+Step 2:
+run the below command:
+
+$ python main.py
+
+Step 3:
+Open out.html locally.
+
+
+*** Online, server mode ***
+
+Step 1:
+Run below command:
+$ python main.py -serve 9001
+
+Step 2:
+Open any browser other than IE (die IE!) and point to "http://localhost:9001/".
+
+Step 3:
+For every word that you dont know, click on the word, and then click on "MARK".
