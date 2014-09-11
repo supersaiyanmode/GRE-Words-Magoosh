@@ -1,5 +1,7 @@
 WORDS_TXT = 'Words.txt'
+JSON_FILE = 'process.dict'
 OUT_HTML = 'out.html'
+
 DIFFICULT_COLOR = 'orange'
 EASY_COLOR = 'white'
 
@@ -11,10 +13,48 @@ from collections import defaultdict
 from collections import OrderedDict
 import json
 import sys
-import atexit
 import SocketServer
 import BaseHTTPServer
 import json
+
+class MagooshDataRetriever(object):
+	URL = 'https://gre.magoosh.com/flashcards/vocabulary/%s/%s'
+	
+	def __init__(self, fileName):
+		self.fileName = fileName
+		self.map = self.loadMap(self.fileName)
+		
+	def retrieve(self, category, word):
+		if word not in self.map:
+			print "Get:", category, word
+			content = self.extractHtml(urllib.urlopen(url).read())
+			self.map[word] = content
+			self.saveMap(self.map, self.fileName)
+		else:
+			content = self.map[word]
+		return content
+
+	@staticmethod
+	def extractHtml(content):
+		start = "<div class='back'>"
+		content = content[content.index(start) + len(start):]
+		end = "<div class='flashcard-actions'>"
+		content = content[:content.index(end)]
+	
+		start = content.index('<div class="flashcard-review-label')
+		end = start + content[start:].index('</div>') + "</div>"
+		return content[:start] + content[end:]
+		
+	@staticmethod
+	def loadMap(fileName):
+		with open(fileName) as f:
+			return json.load(f)
+
+	@staticmethod
+	def saveMap(obj, fileName):
+		with open(fileName, 'w') as f:
+			json.dump(f, obj, indent=2)
+
 
 class Word(object):
 	WORD_HTML = """
@@ -31,14 +71,14 @@ class Word(object):
 	</div>
 	"""
 	
-	def __init__(self, category, text, desc):
+	def __init__(self, category, text, retrieveFn):
 		self.isDifficult = text.strip().endswith("*")
 		self.word = text.rstrip("*")
-		self.description = desc
 		self.category = category
+		self.description = retrieveFn(category, self.word)
 	
 	def wordHtml(self):
-		params = (self.word, DIFFICULT_COLOR if difficult else EASY_COLOR,
+		params = (self.word, [EASY_COLOR,DIFFICULT_COLOR][self.isDifficult],
 				self.word, self.word)
 		return self.WORD_HTML%params
 	
@@ -46,87 +86,48 @@ class Word(object):
 		params = (self.word, self.description, self.word)
 		return self.DESC_HTML%params
 
-def readWords(fileName):
-	dictionary = OrderedDict()
-	difficultyDict = {}
-	curSet = None
-	with open(fileName) as f:
-		for line in f:
-			if not line.strip():
-				continue
-			line = line.strip()
-			if line[0] == '#':
-				curSet = set()
-				dictionary[line[1:]] = curSet
-				continue
-			for word in line.split():
-				word = word.strip()
-				diff = word.endswith("*")
-				word = word.rstrip("*")
-				curSet.add(word)
-				difficultyDict[word] = diff
-	return dictionary, difficultyDict
-
-def getWord(tag, word):
-	print "Get:", tag, word
-	url = 'https://gre.magoosh.com/flashcards/vocabulary/%s/%s'%(tag, word)
-	content = urllib.urlopen(url).read()
-	start = "<div class='back'>"
-	content = content[content.index(start) + len(start):]
-	end = "<div class='flashcard-actions'>"
-	content = content[:content.index(end)]
+class Deck(object):
+	def __init__(self, fileName):
+		self.fileName = fileName
+		self.map = self.load(self.fileName)
 	
-	start = content.index('<div class="flashcard-review-label')
-	end = start + content[start:].index('</div>') + "</div>"
-	return content[:start] + content[end:]
-
-processDict = {}
-
-def loadProcessDict():
-	with open("process.dict") as f:
-		global processDict
-		processDict = json.load(f)
-
-def dumpProcessDict():
-	with open("process.dict","w") as f:
-		print>>f, json.dumps(processDict,indent=2)
+	def html(self):
+		return "".join([
+			"<h3>%s</h3>"%title + "".join([
+				x.wordHtml()+x.descriptionHtml()+["<br>",""][bool((index+1)%10)]
+				for index, x in enumerate(words)
+			])
+			for title, words in self.map.items()
+		])
+	
+	@staticmethod
+	def load(fileName):
+		dictionary = OrderedDict()
+		curTitle = None
+		curGroup = None
+		magoosh = MagooshDataRetriever(JSON_FILE)
 		
-def loadWords(d1):
-	for tag, words in d1.items():
-		for word in words:
-			if word not in processDict:
-				processDict[word] = getWord(tag,word)
-			else:
-				pass #print "Loaded from cache:", word
-atexit.register(dumpProcessDict)
-
-
-def getTemplate(word, desc, difficult):
-	s0 = "<span id='word-%s' style='background-color: %s'>"%(word, DIFFICULT_COLOR if difficult else EASY_COLOR)
-	s1 = "<a href='#' onclick=\"toggleDiv(\'%s\'); return false\">%s</a>"%(word, word)
-	s2 = "</span>"
-	s3 = "<div id='%s' class='explanation' style='display:none'>"%word + desc + "<a href='javascript:void(0)' onclick='mark(\"" + word + "\"); return false;'>MARK</a></div>"
-	return s0 + s1 + s2 + s3
+		with open(fileName) as f:
+			for line in f:
+				if not line.strip():
+					continue
+				line = line.strip()
+				if line[0] == '#':
+					curGroup = []
+					curTitle = line[1:].strip()
+					dictionary[curTitle] = curGroup
+					continue
+				for word in line.split():
+					word = word.strip()
+					curGroup.append(Word(curTitle, word, magoosh.retrieve))
+		return dictionary
 
 def regenerate():
-	d1,diffDict = readWords('Words.txt')
-	loadProcessDict()
-	loadWords(d1)
+	deck = Deck('Words.txt')
 	
 	with open(OUT_HTML, 'w') as out:
 		print>>out, "<html><body>"
-		for tag, words in d1.items():
-			print>>out, "<h3>%s</h3>"%tag
-			for index, word in enumerate(words):
-				diff = diffDict[word]
-				try:
-					desc = processDict.get(word,"").encode('utf-8')
-				except:
-					print word, processDict[word]
-				print >> out, getTemplate(word, desc, diff)
-				if (index+1) % 10 == 0:
-					print >> out, "<br>"
-		
+		print>>out, deck.html().encode('utf-8')
 		print>>out, """
 		<script>
 		function toggleDiv(id) {
