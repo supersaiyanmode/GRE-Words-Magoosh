@@ -3,6 +3,8 @@ OUT_HTML = 'out.html'
 DIFFICULT_COLOR = 'orange'
 EASY_COLOR = 'white'
 
+
+
 import urllib
 import urllib2
 from collections import defaultdict
@@ -13,6 +15,36 @@ import atexit
 import SocketServer
 import BaseHTTPServer
 import json
+
+class Word(object):
+	WORD_HTML = """
+		<span id='word-%s' style='background-color: %s'>
+			<a href='#' onclick=\"toggleDiv('%s'); return false\">%s</a>
+		</span>
+	"""
+	DESC_HTML = """
+		<div id='%s' class='explanation' style='display:none'>
+		%s
+		<a href='javascript:void(0)' onclick='mark(\"%s\"); return false;'>
+			MARK
+		</a>
+	</div>
+	"""
+	
+	def __init__(self, category, text, desc):
+		self.isDifficult = text.strip().endswith("*")
+		self.word = text.rstrip("*")
+		self.description = desc
+		self.category = category
+	
+	def wordHtml(self):
+		params = (self.word, DIFFICULT_COLOR if difficult else EASY_COLOR,
+				self.word, self.word)
+		return self.WORD_HTML%params
+	
+	def descriptionHtml(self):
+		params = (self.word, self.description, self.word)
+		return self.DESC_HTML%params
 
 def readWords(fileName):
 	dictionary = OrderedDict()
