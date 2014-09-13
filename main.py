@@ -2,8 +2,13 @@ WORDS_TXT = 'Words.txt'
 JSON_FILE = 'process.dict'
 OUT_HTML = 'out.html'
 
+DIFFICULT_CHAR = "!"
+MEDIUM_CHAR = "*"
+EASY_CHAR = ""
+
 DIFFICULT_COLOR = 'orange'
-EASY_COLOR = 'white'
+MEDIUM_COLOR = 'yellow'
+EASY_COLOR = 'gray'
 
 
 
@@ -13,6 +18,8 @@ from collections import defaultdict
 from collections import OrderedDict
 import json
 import sys
+import random
+import re
 import SocketServer
 import BaseHTTPServer
 import json
@@ -27,7 +34,7 @@ class MagooshDataRetriever(object):
 	def retrieve(self, category, word):
 		if word not in self.map:
 			print "Get:", category, word
-			content = self.extractHtml(urllib.urlopen(url).read())
+			content = self.extractHtml(urllib.urlopen(self.URL).read())
 			self.map[word] = content
 			self.saveMap(self.map, self.fileName)
 		else:
@@ -58,32 +65,42 @@ class MagooshDataRetriever(object):
 
 class Word(object):
 	WORD_HTML = """
-		<span id='word-%s' style='background-color: %s'>
+		<span class='word-%s' style='background-color: %s'>
 			<a href='#' onclick=\"toggleDiv('%s'); return false\">%s</a>
 		</span>
 	"""
 	DESC_HTML = """
-		<div id='%s' class='explanation' style='display:none'>
+		<div id='%s' class='explanation explanation-%s' style='display:none'>
 		%s
-		<a href='javascript:void(0)' onclick='mark(\"%s\"); return false;'>
-			MARK
+		<a href='javascript:void(0)' onclick='mark(\"%s\", 0); return false;'>
+			Easy
+		</a> |
+		<a href='javascript:void(0)' onclick='mark(\"%s\", 1); return false;'>
+			Medium
+		</a> |
+		<a href='javascript:void(0)' onclick='mark(\"%s\", 2); return false;'>
+			Difficult
 		</a>
 	</div>
 	"""
 	
 	def __init__(self, category, text, retrieveFn):
-		self.isDifficult = text.strip().endswith("*")
-		self.word = text.rstrip("*")
+		self.isDifficult = text.strip().endswith(DIFFICULT_CHAR)
+		self.isMedium = text.strip().endswith(MEDIUM_CHAR)
+		self.word = text.rstrip(DIFFICULT_CHAR + MEDIUM_CHAR)
 		self.category = category
 		self.description = retrieveFn(category, self.word)
 	
 	def wordHtml(self):
-		params = (self.word, [EASY_COLOR,DIFFICULT_COLOR][self.isDifficult],
-				self.word, self.word)
-		return self.WORD_HTML%params
+		color = [
+					[EASY_COLOR, MEDIUM_COLOR][self.isMedium],
+					DIFFICULT_COLOR
+				][self.isDifficult]
+		return self.WORD_HTML%(self.word, color, self.word, self.word)
 	
 	def descriptionHtml(self):
-		params = (self.word, self.description, self.word)
+		w, d = self.word, self.description
+		params = (w,w,d,w,w,w)
 		return self.DESC_HTML%params
 
 class Deck(object):
@@ -92,13 +109,31 @@ class Deck(object):
 		self.map = self.load(self.fileName)
 	
 	def html(self):
-		return "".join([
-			"<h3>%s</h3>"%title + "".join([
+		dw = list(x for x in sum(self.map.values(), []) if x.isDifficult)
+		mw = list(x for x in sum(self.map.values(), []) if x.isMedium)
+		
+		s = ("<h1>Difficult Words (%d)</h1>"%len(dw) +
+			"".join(
 				x.wordHtml()+x.descriptionHtml()+["<br>",""][bool((index+1)%10)]
-				for index, x in enumerate(words)
+				for index, x in enumerate(dw)
+			) + 
+			"<hr>")
+		s = s + ("<h1>Medium level difficulty Words(%d)</h1>"%len(mw) +
+			"".join(
+				x.wordHtml()+x.descriptionHtml()+["<br>",""][bool((index+1)%10)]
+				for index, x in enumerate(mw)
+			) + "<hr>")
+		s = s + ("<h1>All words</h1>" +
+			"".join([
+				"<h3>%s</h3>"%title + "".join(
+					x.wordHtml()+x.descriptionHtml()+
+					["<br>",""][bool((index+1)%10)]
+					for index, x in enumerate(self.shuffle(words))
+				)
+				for title, words in self.map.items()
 			])
-			for title, words in self.map.items()
-		])
+		)
+		return s
 	
 	@staticmethod
 	def load(fileName):
@@ -121,6 +156,11 @@ class Deck(object):
 					word = word.strip()
 					curGroup.append(Word(curTitle, word, magoosh.retrieve))
 		return dictionary
+	
+	@staticmethod
+	def shuffle(lst):
+		random.shuffle(lst)
+		return lst
 
 def regenerate():
 	deck = Deck('Words.txt')
@@ -128,29 +168,37 @@ def regenerate():
 	with open(OUT_HTML, 'w') as out:
 		print>>out, "<html><body>"
 		print>>out, deck.html().encode('utf-8')
+		print>>out, "<script>"
+		print>>out, 'var COLORS = ["%s", "%s", "%s"];'%(EASY_COLOR, MEDIUM_COLOR,
+			 	DIFFICULT_COLOR)
 		print>>out, """
-		<script>
 		function toggleDiv(id) {
 			var state = document.getElementById(id).style.display;
 			Array.prototype.forEach.call(document.getElementsByClassName('explanation'), function(elem) {
 				elem.style.display = 'none';
 			});
-			if (state == 'block')
-				document.getElementById(id).style.display = 'none';
-			else
-				document.getElementById(id).style.display = 'block';
+			Array.prototype.forEach.call(document.getElementsByClassName('explanation-' + id), function(elem) {
+				elem.style.display = state== 'block' ? 'none' : 'block';
+			});
 		}
 		
-		function mark(id) {
+		function mark(id, diffLevel) { //level = 1 for medium, 2 for difficult
+			if ([0,1,2].indexOf(diffLevel) == -1)
+				return;
 			var xhr = new XMLHttpRequest();
 			xhr.onreadystatechange = function() {
 				if (xhr.readyState == 4) {
 					obj = JSON.parse(xhr.responseText);
-					document.getElementById('word-' + id).style.backgroundColor = (obj.marked == true)? "orange": "white";
+					if (obj.state >= 0) {
+						Array.prototype.forEach.call(document.getElementsByClassName('word-' + id), function(x) {
+							x.style.backgroundColor = COLORS[obj.state]
+						})
+					}
+					
 				}
 			}
-			xhr.open('POST', '/mark/' + id, true);
-			xhr.send(null);
+			xhr.open('POST', '/words/' + id, true);
+			xhr.send(diffLevel + "");
 		}
 		</script>
 		</body>
@@ -160,35 +208,41 @@ def regenerate():
 def serve(port):
 	class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
 		def do_POST(self):
-			word = self.path[self.path.index("mark/") + len("mark/"):]
+			word = self.path[self.path.index("words/") + len("words/"):]
 			print "Word: ", word
-			marked = None
-			with open(WORDS_TXT) as f:
-				lines = list(x.strip() for x in f)
-			with open(WORDS_TXT, "w") as f:
-				for line in lines:
-					if word in line:
-						if word + "*" in line:
-							print>>f, line.replace(word + "*", word)
-							marked = False
-						elif word in line:
-							print>>f, line.replace(word, word + "*")
-							marked = True
-						else:
-							print>>f, line
-					else:
-						print>>f, line
+			state = int(self.rfile.read(1))
+			result = state if self.updateState(word, state) else -1
 			regenerate()
 			self.send_response(200)
 			self.end_headers()
-			self.wfile.write(json.dumps({"marked": marked}))
+			self.wfile.write(json.dumps({"state": result}))
 			
 		def do_GET(self):
+			regenerate()
 			self.send_response(200)
 			self.end_headers()
 			with open(OUT_HTML) as f:
 				self.wfile.write(f.read())
 			self.wfile.close()
+		
+		@staticmethod
+		def updateState(word, state):
+			updated = False
+			with open(WORDS_TXT) as f:
+				lines = list(x.strip() for x in f)
+			with open(WORDS_TXT, "w") as f:
+				for line in lines:
+					if word in line:
+						find = word + "[%s]?(?=(\\t|$))"%"".join([
+							MEDIUM_CHAR, DIFFICULT_CHAR])
+						replace = word + [EASY_CHAR, MEDIUM_CHAR,
+									DIFFICULT_CHAR][state]
+						newline = re.sub(find, replace, line)
+						updated = updated or newline != line
+						print>>f, newline
+					else:
+						print>>f, line
+			return updated
 	
 	httpd = SocketServer.TCPServer(("", port), Handler)
 
